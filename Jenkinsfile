@@ -14,25 +14,23 @@ pipeline {
 
   stages {
 
-    // 0) Ensure .env exists (create it from Jenkins creds if missing)
+    // Write a non-secret .env each run (sanitizes any previous file)
     stage('Prepare .env') {
-        steps {
-            withCredentials([
-            usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS'),
-            string(credentialsId: 'snyk-token', variable: 'SNYK_PAT')
-            ]) {
-            sh '''
-                set -eu
-                if [ ! -f .env ]; then
-                printf "DOCKERHUB_USER=%s\nDOCKERHUB_PASS=%s\nIMAGE=%s\nSNYK_TOKEN=%s\n" \
-                    "$DH_USER" "$DH_PASS" "eb-node-sample-assignment02-task03" "$SNYK_PAT" > .env
-                echo "[Prepare .env] Created .env from Jenkins credentials"
-                else
-                echo "[Prepare .env] Found existing .env"
-                fi
-            '''
-            }
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')
+        ]) {
+          sh '''
+            set -eu
+            # Only non-secrets here
+            DOCKERHUB_USER_SAFE="${DH_USER:-gamerssassin}"
+            IMAGE_SAFE="${IMAGE:-eb-node-sample-assignment02-task03}"
+            printf "DOCKERHUB_USER=%s\nIMAGE=%s\n" \
+              "$DOCKERHUB_USER_SAFE" "$IMAGE_SAFE" > .env
+            echo "[Prepare .env] Wrote sanitized .env (no secrets)"
+          '''
         }
+      }
     }
 
     stage('Prep tools') {
@@ -49,14 +47,13 @@ pipeline {
     }
 
     stage('Install deps') {
-      steps { sh 'npm install --save' }
+      steps { sh 'npm install --save' }   // rubric requirement
     }
 
     stage('Unit tests') {
       steps { sh 'npm test' }
     }
 
-    // Build image — with safe fallbacks if .env is missing/empty
     stage('Build image') {
       steps {
         sh '''
@@ -70,16 +67,16 @@ pipeline {
       }
     }
 
-    // --- Security: Snyk (deps) ---
+    // ---- Security gate #1: dependencies ----
     stage('Security: Snyk (deps)') {
       steps {
-        withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN_FALLBACK')]) {
+        withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
           sh '''
             [ -f .env ] && . ./.env || true
-            SNYK_TOKEN="${SNYK_TOKEN:-$SNYK_TOKEN_FALLBACK}"
-            SNYK_TOKEN="$(printf '%s' "$SNYK_TOKEN" | tr -d '\\r\\n')"
-            export SNYK_TOKEN
-            snyk auth "$SNYK_TOKEN" >/dev/null 2>&1 || true
+            # Export token for CLI (do NOT echo it)
+            export SNYK_TOKEN="$(printf '%s' "$SNYK_TOKEN" | tr -d '\\r\\n')"
+            # Optional: set region endpoint (non-secret). Put SNYK_API in .env if you’re on EU/AU.
+            [ -n "${SNYK_API:-}" ] && export SNYK_API
             set -o pipefail
             snyk test --severity-threshold=high | tee snyk-deps.txt
           '''
@@ -87,16 +84,14 @@ pipeline {
       }
     }
 
-    // --- Security: Snyk (container) ---
+    // ---- Security gate #2: container image ----
     stage('Security: Snyk (container)') {
       steps {
-        withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN_FALLBACK')]) {
+        withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
           sh '''
             [ -f .env ] && . ./.env || true
-            SNYK_TOKEN="${SNYK_TOKEN:-$SNYK_TOKEN_FALLBACK}"
-            SNYK_TOKEN="$(printf '%s' "$SNYK_TOKEN" | tr -d '\\r\\n')"
-            export SNYK_TOKEN
-            snyk auth "$SNYK_TOKEN" >/dev/null 2>&1 || true
+            export SNYK_TOKEN="$(printf '%s' "$SNYK_TOKEN" | tr -d '\\r\\n')"
+            [ -n "${SNYK_API:-}" ] && export SNYK_API
             DOCKERHUB_USER="${DOCKERHUB_USER:-gamerssassin}"
             IMAGE="${IMAGE:-eb-node-sample-assignment02-task03}"
             set -o pipefail
@@ -107,19 +102,18 @@ pipeline {
       post { failure { echo 'Security scan failed due to High/Critical vulnerabilities.' } }
     }
 
-    // Push image — with safe fallbacks and credential backup
     stage('Push image') {
       steps {
         withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
           sh '''
             [ -f .env ] && . ./.env || true
             DOCKERHUB_USER="${DOCKERHUB_USER:-$DH_USER}"
-            DOCKERHUB_PASS="${DOCKERHUB_PASS:-$DH_PASS}"
             IMAGE="${IMAGE:-eb-node-sample-assignment02-task03}"
             TAG="$DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER"
-            printf '%s' "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
+            # Login without echoing the secret
+            printf '%s' "$DH_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
             docker push "$TAG"
-            docker tag  "$TAG" "$DOCKERHUB_USER/$IMAGE:latest"
+            docker tag "$TAG" "$DOCKERHUB_USER/$IMAGE:latest"
             docker push "$DOCKERHUB_USER/$IMAGE:latest"
           '''
         }
