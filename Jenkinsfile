@@ -33,23 +33,6 @@ pipeline {
     stage('Unit tests') {
       steps { sh 'npm test' }
     }
-
-    // --- Security: dependencies (fail on High/Critical) ---
-    stage('Security: Snyk (deps)') {
-      steps {
-        withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN_FALLBACK')]) {
-          sh '''
-            [ -f .env ] && . ./.env || true
-            : "${SNYK_TOKEN:=$SNYK_TOKEN_FALLBACK}"  # prefer .env, else Jenkins cred
-            test -n "$SNYK_TOKEN" || { echo "SNYK_TOKEN missing"; exit 2; }
-            # no interactive auth; token in env is enough
-            set -o pipefail
-            snyk test --severity-threshold=high | tee snyk-deps.txt
-          '''
-        }
-      }
-    }
-
     stage('Build image') {
       steps {
         sh '''
@@ -58,23 +41,48 @@ pipeline {
         '''
       }
     }
-
-    // --- Security: container image (fail on High/Critical) ---
-    stage('Security: Snyk (container)') {
-      steps {
+    // --- Security: Snyk (deps) ---
+    stage('Security: Snyk (deps)') {
+    steps {
         withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN_FALLBACK')]) {
-          sh '''
+        sh '''
             [ -f .env ] && . ./.env || true
-            : "${SNYK_TOKEN:=$SNYK_TOKEN_FALLBACK}"
-            test -n "$SNYK_TOKEN" || { echo "SNYK_TOKEN missing"; exit 2; }
+            # Prefer .env, else Jenkins credential
+            SNYK_TOKEN="${SNYK_TOKEN:-$SNYK_TOKEN_FALLBACK}"
+            # Trim any newline/CR from the secret
+            SNYK_TOKEN="$(printf '%s' "$SNYK_TOKEN" | tr -d '\\r\\n')"
+            # >>> THIS WAS MISSING: export so child processes see it
+            export SNYK_TOKEN
+
+            # Optional but harmless: non-interactive auth caches the token
+            snyk auth "$SNYK_TOKEN" >/dev/null 2>&1 || true
+
             set -o pipefail
-            snyk container test $DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER --file=Dockerfile --severity-threshold=high | tee snyk-image.txt
-          '''
+            snyk test --severity-threshold=high | tee snyk-deps.txt
+        '''
         }
-      }
-      post {
+    }
+    }
+
+    // --- Security: Snyk (container) ---
+    stage('Security: Snyk (container)') {
+    steps {
+        withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN_FALLBACK')]) {
+        sh '''
+            [ -f .env ] && . ./.env || true
+            SNYK_TOKEN="${SNYK_TOKEN:-$SNYK_TOKEN_FALLBACK}"
+            SNYK_TOKEN="$(printf '%s' "$SNYK_TOKEN" | tr -d '\\r\\n')"
+            export SNYK_TOKEN
+            snyk auth "$SNYK_TOKEN" >/dev/null 2>&1 || true
+
+            set -o pipefail
+            snyk container test "$DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER" --file=Dockerfile --severity-threshold=high | tee snyk-image.txt
+        '''
+        }
+    }
+    post {
         failure { echo 'Security scan failed due to High/Critical vulnerabilities.' }
-      }
+    }
     }
 
     stage('Push image') {
