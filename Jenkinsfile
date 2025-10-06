@@ -1,40 +1,38 @@
 pipeline {
   agent {
     docker {
-      image 'node:16'
+      image 'node:16-alpine' // non-alpine in EOL 
       args  '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
     }
   }
 
   options {
-    timestamps()
     ansiColor('xterm')
-    buildDiscarder(
-      logRotator(numToKeepStr: '20', artifactDaysToKeepStr: '7')
-    )
+    timestamps()
+    buildDiscarder(logRotator(numToKeepStr: '20', artifactDaysToKeepStr: '7'))
   }
 
   stages {
     stage('Prep tools') {
       steps {
         sh '''
-          apt-get update && apt-get install -y docker.io >/dev/null 2>&1 || true
+          # ensure docker cli exists inside the agent container
+          if ! command -v docker >/dev/null 2>&1; then
+            apk update && apk add --no-cache docker-cli
+          fi
+          node -v && npm -v && docker --version
           npm install -g snyk@latest
-          node -v && npm -v && snyk --version && docker --version
+          snyk --version
         '''
       }
     }
 
     stage('Install deps') {
-      steps {
-        sh 'npm install --save'
-      }
+      steps { sh 'npm install --save' }   // per rubric
     }
 
     stage('Unit tests') {
-      steps {
-        sh 'npm test'
-      }
+      steps { sh 'npm test' }
     }
 
     stage('Security: Snyk (deps)') {
@@ -67,9 +65,7 @@ pipeline {
         '''
       }
       post {
-        failure {
-          echo 'Security scan failed due to High/Critical vulnerabilities.'
-        }
+        failure { echo 'Security scan failed due to High/Critical vulnerabilities.' }
       }
     }
 
