@@ -4,7 +4,8 @@
   "description": "Sample Node.js (Express) app for AWS Elastic Beanstalk",
   "main": "app.js",
   "scripts": {
-    "start": "node app.js"
+    "start": "node app.js",
+    "test": "jest --ci"
   },
   "repository": {
     "type": "git",
@@ -13,5 +14,10 @@
   "license": "MIT-0",
   "dependencies": {
     "express": "^4.21.2"
-  }
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  },
+  "jest": { "testEnvironment": "node" }
 }
