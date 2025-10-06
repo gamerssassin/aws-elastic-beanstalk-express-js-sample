@@ -8,7 +8,7 @@ WORKDIR /app
 RUN apk update && apk upgrade --no-cache openssl
 
 # Update global npm (fixes semver/ip issues)
-RUN npm i -g npm@10.2.0
+RUN npm i -g npm@8.19.4
 
 # Install only prod deps (tests/dev stuff stays out of the final image)
 COPY package*.json ./
