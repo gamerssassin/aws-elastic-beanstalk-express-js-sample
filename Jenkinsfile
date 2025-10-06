@@ -16,26 +16,23 @@ pipeline {
 
     // 0) Ensure .env exists (create it from Jenkins creds if missing)
     stage('Prepare .env') {
-      steps {
-        withCredentials([
-          usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS'),
-          string(credentialsId: 'snyk-token', variable: 'SNYK_PAT')
-        ]) {
-          sh '''
-            if [ ! -f .env ]; then
-              cat > .env <<EOF
-              DOCKERHUB_USER=${DH_USER}
-              DOCKERHUB_PASS=${DH_PASS}
-              IMAGE=eb-node-sample-assignment02-task03
-              SNYK_TOKEN=${SNYK_PAT}
-              EOF
-              echo "[Prepare .env] Created .env from Jenkins credentials"
-            else
-              echo "[Prepare .env] Found existing .env"
-            fi
-          '''
+        steps {
+            withCredentials([
+            usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS'),
+            string(credentialsId: 'snyk-token', variable: 'SNYK_PAT')
+            ]) {
+            sh '''
+                set -eu
+                if [ ! -f .env ]; then
+                printf "DOCKERHUB_USER=%s\nDOCKERHUB_PASS=%s\nIMAGE=%s\nSNYK_TOKEN=%s\n" \
+                    "$DH_USER" "$DH_PASS" "eb-node-sample-assignment02-task03" "$SNYK_PAT" > .env
+                echo "[Prepare .env] Created .env from Jenkins credentials"
+                else
+                echo "[Prepare .env] Found existing .env"
+                fi
+            '''
+            }
         }
-      }
     }
 
     stage('Prep tools') {
