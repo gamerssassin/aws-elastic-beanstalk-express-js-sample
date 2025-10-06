@@ -6,6 +6,14 @@ pipeline {
     }
   }
 
+  options {
+    timestamps()
+    ansiColor('xterm')
+    buildDiscarder(
+      logRotator(numToKeepStr: '20', artifactDaysToKeepStr: '7')
+    )
+  }
+
   stages {
     stage('Prep tools') {
       steps {
@@ -19,7 +27,6 @@ pipeline {
 
     stage('Install deps') {
       steps {
-        // rubric: must use --save
         sh 'npm install --save'
       }
     }
@@ -30,52 +37,58 @@ pipeline {
       }
     }
 
-    // ---- Security Gate #1: App dependencies ----
     stage('Security: Snyk (deps)') {
       steps {
         sh '''
-          set -a; . ./.env; set +a
+          [ -f .env ] && . ./.env || true
           snyk auth "$SNYK_TOKEN"
-          # fail build if High/Critical vulns exist
-          snyk test --severity-threshold=high
+          set -o pipefail
+          snyk test --severity-threshold=high | tee snyk-deps.txt
         '''
       }
     }
 
     stage('Build image') {
       steps {
-        sh 'set -a; . ./.env; set +a; docker build -t $DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER .'
+        sh '''
+          [ -f .env ] && . ./.env || true
+          docker build -t $DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER .
+        '''
       }
     }
 
-    // ---- Security: Snyk (container) MUST FAIL AND STOP IF VULNS FOUND
     stage('Security: Snyk (container)') {
-        steps {
-            sh '''
-            set -a; . ./.env; set +a
-            snyk auth "$SNYK_TOKEN"
-            snyk container test $DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER --file=Dockerfile --severity-threshold=high
-            '''
+      steps {
+        sh '''
+          [ -f .env ] && . ./.env || true
+          snyk auth "$SNYK_TOKEN"
+          set -o pipefail
+          snyk container test $DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER --file=Dockerfile --severity-threshold=high | tee snyk-image.txt
+        '''
+      }
+      post {
+        failure {
+          echo 'Security scan failed due to High/Critical vulnerabilities.'
         }
-        post {
-            failure {
-                echo 'Security scan failed due to high or critical vulnerabilities. Stopping the pipeline.'
-                error('Pipeline stopped due to security vulnerabilities.')
-            }
-        }
+      }
     }
 
     stage('Push image') {
       steps {
-        // Load env vars and push to DockerHub
         sh '''
-          set -a; . ./.env; set +a 
+          [ -f .env ] && . ./.env || true
           printf '%s' "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
           docker push $DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER
           docker tag  $DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER $DOCKERHUB_USER/$IMAGE:latest
           docker push $DOCKERHUB_USER/$IMAGE:latest
         '''
       }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: 'snyk-*.txt, Dockerfile, package*.json, Jenkinsfile', fingerprint: true
     }
   }
 }
