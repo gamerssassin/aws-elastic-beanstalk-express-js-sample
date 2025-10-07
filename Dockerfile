@@ -4,15 +4,8 @@ FROM node:16-alpine
 # App directory
 WORKDIR /app
 
-# Update OpenSSL (fixes Issues)
-RUN apk update && apk upgrade --no-cache openssl
-
-# Update global npm (fixes semver/ip issues)
-RUN npm i -g npm@8.19.4
-
 # Install only prod deps (tests/dev stuff stays out of the final image)
 COPY package*.json ./
-# Deps
 RUN npm install --only=production
 
 # Copy the rest of the app
