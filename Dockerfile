@@ -1,5 +1,4 @@
-# Small base, Node 16 as required
-FROM node:16-alpine
+FROM node:20-alpine
 
 # App directory
 WORKDIR /app
