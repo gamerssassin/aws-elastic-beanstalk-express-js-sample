@@ -94,26 +94,22 @@ pipeline {
         failure { echo 'Security scan failed due to High/Critical vulnerabilities (non-base layers).' }
       }
     }
-
-    stage('Push image') {
-      steps {
+  stage('Push image') {
+    steps {
         withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
-          sh '''
+        sh '''
             [ -f .env ] && . ./.env || true
             DOCKERHUB_USER="${DOCKERHUB_USER:-$DH_USER}"
             IMAGE="${IMAGE:-eb-node-sample-assignment02-task03}"
             TAG="$DOCKERHUB_USER/$IMAGE:$BUILD_NUMBER"
 
-            # login w/out echoing the secret
             printf '%s' "$DH_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
-
             docker push "$TAG"
-            docker tag "$TAG" "$DOCKERHUB_USER/$IMAGE:latest"
-            docker push "$DOCKERHUB_USER/$IMAGE:latest"
-          '''
+        '''
         }
-      }
-    }
+  }
+}
+
   }
 
   post {
